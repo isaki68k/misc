@@ -1,0 +1,147 @@
+Index: spc.c
+===================================================================
+RCS file: /cvsroot/src/sys/arch/x68k/dev/spc.c,v
+retrieving revision 1.35
+diff -u -r1.35 spc.c
+--- src/sys/arch/x68k/dev/spc.c	18 Dec 2008 05:56:42 -0000	1.35
++++ src/sys/arch/x68k/dev/spc.c	17 May 2014 14:16:53 -0000
+@@ -46,6 +46,7 @@
+ #include <dev/scsipi/scsipi_all.h>
+ #include <dev/scsipi/scsiconf.h>
+ 
++#include <arch/x68k/dev/dmacvar.h>
+ #include <arch/x68k/dev/intiovar.h>
+ #include <arch/x68k/dev/scsiromvar.h>
+ #include <arch/x68k/x68k/iodevice.h>
+@@ -55,8 +56,21 @@
+ 
+ static int spc_intio_match(device_t, cfdata_t, void *);
+ static void spc_intio_attach(device_t, device_t, void *);
++static void spc_intio_dma_start(struct spc_softc *, void *, size_t, int);
++static void spc_intio_dma_done(struct spc_softc *);
++static int  spc_dmaintr(void *);
++static int  spc_dmaerrintr(void *);
++
++struct spc_intio_softc {
++	struct spc_softc sc_spc;	/* must place in first */
++
++	bus_addr_t sc_addr;
++	bus_dma_tag_t sc_dmat;
++	bus_dmamap_t sc_dmamap;
++	struct dmac_channel_stat *sc_dma_ch;
++};
+ 
+-CFATTACH_DECL_NEW(spc_intio, sizeof(struct spc_softc),
++CFATTACH_DECL_NEW(spc_intio, sizeof(struct spc_intio_softc),
+     spc_intio_match, spc_intio_attach, NULL, NULL);
+ 
+ static int
+@@ -85,10 +99,13 @@
+ static void
+ spc_intio_attach(device_t parent, device_t self, void *aux)
+ {
+-	struct spc_softc *sc = device_private(self);
++	struct spc_intio_softc *sci = device_private(self);
++	struct spc_softc *sc = (struct spc_softc *)sci;
+ 	struct intio_attach_args *ia = aux;
+ 	bus_space_tag_t iot = ia->ia_bst;
+ 	bus_space_handle_t ioh;
++	bus_size_t size;
++	int r;
+ 
+ 	sc->sc_dev = self;
+ 
+@@ -108,5 +125,93 @@
+ 	if (intio_intr_establish(ia->ia_intr, "spc", spc_intr, sc))
+ 		panic("spcattach: interrupt vector busy");
+ 
++	sci->sc_addr = ia->ia_addr;
++	sci->sc_dmat = ia->ia_dmat;
++	sci->sc_dma_ch = dmac_alloc_channel(device_parent(parent),
++		ia->ia_dma, "spc",
++		ia->ia_dmaintr,     spc_dmaintr, sc,
++		ia->ia_dmaintr + 1, spc_dmaerrintr, sc);
++	sci->sc_dma_ch->ch_dcr = (DMAC_DCR_XRM_CSWOH | DMAC_DCR_OTYP_EASYNC |
++		DMAC_DCR_OPS_8BIT);
++	sci->sc_dma_ch->ch_ocr = DMAC_OCR_REQG_EXTERNAL;
++
++	/* size is dummy; The actual size is decided at bus_dmamap_load() */
++	size = 65536;
++	r = bus_dmamap_create(sci->sc_dmat, size, 1, size, 0,
++	    BUS_DMA_WAITOK, &sci->sc_dmamap);
++	if (r != 0) {
++		aprint_error(": bus_dmamap_create failed: %d\n", r);
++		return;
++	}
++
++	sc->sc_dma_start = spc_intio_dma_start;
++	sc->sc_dma_done = spc_intio_dma_done;
++
+ 	spc_attach(sc);
+ }
++
++static int
++spc_dmaintr(void *arg)
++{
++	//struct spc_softc *sc = arg;
++
++printf("%s\n", __func__);
++
++	return 0;
++}
++
++static int
++spc_dmaerrintr(void *arg)
++{
++	//struct spc_softc *sc = arg;
++
++printf("%s\n", __func__);
++	return 0;
++}
++
++static void
++spc_intio_dma_start(struct spc_softc *sc, void *addr, size_t size, int datain)
++{
++	struct spc_intio_softc *sci = (struct spc_intio_softc *)sc;
++	struct dmac_softc *dmac;
++	struct dmac_channel_stat *ch;
++	struct dmac_dma_xfer *xf;
++	int r;
++
++printf("%s(%p,%u,%s)\n", __func__, addr, size, datain?"IN":"OUT");
++
++	ch = sci->sc_dma_ch;
++	dmac = ch->ch_softc;
++
++	r = bus_dmamap_load(sci->sc_dmat, sci->sc_dmamap, addr, size, NULL,
++	    BUS_DMA_WAITOK);
++	if (r != 0) {
++		printf("%s: bus_dmamap_load failed: %d\n", __func__, r);
++		goto abort;
++	}
++
++	xf = dmac_alloc_xfer(ch, sci->sc_dmat, sci->sc_dmamap);
++	xf->dx_ocr = datain ? DMAC_OCR_DIR_DTM : DMAC_OCR_DIR_MTD;
++	xf->dx_scr = DMAC_SCR_MAC_COUNT_UP | DMAC_SCR_DAC_NO_COUNT;
++	xf->dx_device = (void *)(sci->sc_addr + DREG * 2 + 1);
++	dmac_load_xfer(dmac, xf);
++
++	bus_space_write_1(sc->sc_iot, sc->sc_ioh, TCH, size >> 16);
++	bus_space_write_1(sc->sc_iot, sc->sc_ioh, TCM, size >> 8);
++	bus_space_write_1(sc->sc_iot, sc->sc_ioh, TCL, size);
++	bus_space_write_1(sc->sc_iot, sc->sc_ioh, PCTL,
++		sc->sc_phase | PCTL_BFINT_ENAB);
++	bus_space_write_1(sc->sc_iot, sc->sc_ioh, SCMD, SCMD_XFR);
++
++	dmac_start_xfer(dmac, xf);
++	return;
++
++abort:
++	bus_dmamap_unload(sci->sc_dmat, sci->sc_dmamap);
++}
++
++static void
++spc_intio_dma_done(struct spc_softc *sc)
++{
++	printf("%s\n", __func__);
++}
