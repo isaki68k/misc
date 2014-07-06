@@ -1,5 +1,5 @@
 --- boot.c.orig	2014-07-05 21:59:30.000000000 +0900
-+++ boot.c	2014-07-06 12:55:46.000000000 +0900
++++ boot.c	2014-07-06 14:37:35.000000000 +0900
 @@ -278,6 +278,23 @@
  	}
  }
@@ -24,37 +24,39 @@
  
  extern const char bootprog_rev[];
  extern const char bootprog_name[];
-@@ -290,6 +307,8 @@
+@@ -290,6 +307,9 @@
  void
  bootmain(int bootdev)
  {
-+	u_int sram_memsize, probed_memsize;
++	u_int sram_memsize;
++	u_int probed_memsize;
 +
  	hostadaptor = get_scsi_host_adapter();
  	mpu = detectmpu();
  
-@@ -297,11 +316,23 @@
+@@ -297,7 +317,8 @@
  		printf("This MPU cannot run NetBSD.\n");
  		exit(1);
  	}
 -	if (SRAM_MEMSIZE < 4*1024*1024) {
-+
 +	sram_memsize = SRAM_MEMSIZE;
-+	probed_memsize = checkmemsize();
-+
 +	if (sram_memsize < 4*1024*1024) {
  		printf("Main memory too small.\n");
  		exit(1);
  	}
- 
+@@ -326,5 +347,15 @@
+ 		printf("Warning: unknown boot device: %x\n", bootdev);
+ 	}
+ 	print_title("%s, Revision %s\n", bootprog_name, bootprog_rev);
++
++	probed_memsize = checkmemsize();
 +	if (sram_memsize != probed_memsize) {
 +		printf("\x1b[1mWarning: SRAM Memory Size (%d MB) "
 +		    "is different from probed Memory Size (%d MB)\n"
-+		    "         Check and reset SRAM values.\x1b[m\n",
++		    "         Check and reset SRAM values.\x1b[m\n\n",
 +		    sram_memsize / (1024 * 1024),
 +		    probed_memsize / (1024 * 1024));
 +	}
 +
- 	console_device = consio_init(console_device);
- 	setheap(HEAP_START, HEAP_END);
- 
+ 	bootmenu();
+ }
