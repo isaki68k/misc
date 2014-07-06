@@ -1,0 +1,60 @@
+--- boot.c.orig	2014-07-05 21:59:30.000000000 +0900
++++ boot.c	2014-07-06 12:55:46.000000000 +0900
+@@ -278,6 +278,23 @@
+ 	}
+ }
+ 
++static u_int
++checkmemsize(void)
++{
++	u_int m;
++
++#define	MIN_MB	4
++#define	MAX_MB	12
++
++	for (m = MIN_MB; m <= MAX_MB; m++) {
++		if (badbaddr((void *)(m * 1024 * 1024 - 1))) {
++			/* no memory */
++			break;
++		}
++	} 
++
++	return (m - 1) * 1024 * 1024;
++}
+ 
+ extern const char bootprog_rev[];
+ extern const char bootprog_name[];
+@@ -290,6 +307,8 @@
+ void
+ bootmain(int bootdev)
+ {
++	u_int sram_memsize, probed_memsize;
++
+ 	hostadaptor = get_scsi_host_adapter();
+ 	mpu = detectmpu();
+ 
+@@ -297,11 +316,23 @@
+ 		printf("This MPU cannot run NetBSD.\n");
+ 		exit(1);
+ 	}
+-	if (SRAM_MEMSIZE < 4*1024*1024) {
++
++	sram_memsize = SRAM_MEMSIZE;
++	probed_memsize = checkmemsize();
++
++	if (sram_memsize < 4*1024*1024) {
+ 		printf("Main memory too small.\n");
+ 		exit(1);
+ 	}
+ 
++	if (sram_memsize != probed_memsize) {
++		printf("\x1b[1mWarning: SRAM Memory Size (%d MB) "
++		    "is different from probed Memory Size (%d MB)\n"
++		    "         Check and reset SRAM values.\x1b[m\n",
++		    sram_memsize / (1024 * 1024),
++		    probed_memsize / (1024 * 1024));
++	}
++
+ 	console_device = consio_init(console_device);
+ 	setheap(HEAP_START, HEAP_END);
+ 
