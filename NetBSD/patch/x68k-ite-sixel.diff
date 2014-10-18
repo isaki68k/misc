@@ -1,5 +1,5 @@
 diff --git a/ite.c b/ite.c
-index 2e254c8..221aa2c 100644
+index 2e254c8..9873502 100644
 --- sys/arch/x68k/dev/ite.c
 +++ sys/arch/x68k/dev/ite.c
 @@ -87,6 +87,7 @@ void opm_bell(void);
@@ -34,7 +34,7 @@ index 2e254c8..221aa2c 100644
  				break;
  
  			case ']':
-@@ -2081,6 +2091,200 @@ iteputchar(int c, struct ite_softc *ip)
+@@ -2081,6 +2091,211 @@ iteputchar(int c, struct ite_softc *ip)
  			break;
  
  
@@ -63,6 +63,12 @@ index 2e254c8..221aa2c 100644
 +					memset(ip->decsixel_buf, 0, sizeof(ip->decsixel_buf));
 +					return;
 +
++				case CAN:
++				case SUB:
++					/* SUB should also display a reverse question mark... */
++					ip->escape = 0;
++					return;
++
 +				case ESC:
 +					ip->escape = ESC;
 +					return;
@@ -77,6 +83,11 @@ index 2e254c8..221aa2c 100644
 +				switch (ip->decsixel_state) {
 +				case DECSIXEL_INIT:
 +					switch (c) {
++					case CAN:
++					case SUB:
++						/* SUB should also display a reverse question mark... */
++						ip->escape = 0;
++						return;
 +					case ESC:
 +						ip->escape = ESC;
 +						return;
@@ -235,7 +246,7 @@ index 2e254c8..221aa2c 100644
  		default:
  			ip->escape = 0;
  			return;
-@@ -2207,6 +2411,7 @@ iteputchar(int c, struct ite_softc *ip)
+@@ -2207,6 +2422,7 @@ iteputchar(int c, struct ite_softc *ip)
  		
  	case DCS:	/* device control string introducer */
  		ip->escape = DCS;
