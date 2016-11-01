@@ -1,4 +1,5 @@
-X68k の ite(4) で SIXEL 画像を表示できるようにするネタパッチです。
+NetBSD/x68k のコンソール ite(4) で SIXEL 画像を表示できるようにする
+ネタパッチ 20161101 版です。
 このパッチをあてて GENERIC カーネルをビルドするだけで使えるように
 なります。
 
@@ -32,31 +33,30 @@ o ITE_16COLOR オプションを定義した場合のカラーマップはこち
 o 異常系はほとんど実装してません。お手製のシーケンスを食わせたりしない
   ように :-)
 
-Index: sys/arch/x68k/conf/GENERIC
-===================================================================
-RCS file: /cvsroot/src/sys/arch/x68k/conf/GENERIC,v
-retrieving revision 1.180
-diff -u -r1.180 GENERIC
---- sys/arch/x68k/conf/GENERIC	8 Aug 2015 06:36:26 -0000	1.180
-+++ sys/arch/x68k/conf/GENERIC	17 Sep 2015 04:24:15 -0000
-@@ -247,6 +247,9 @@
+前回 (20150915) からの変更点:
+o OR モードを実装
+o 高速化
+o 幅を 768dot で初期化
+
+diff --git a/conf/GENERIC b/conf/GENERIC
+index c3389a7..b6c700a 100644
+--- sys/arch/x68k/conf/GENERIC
++++ sys/arch/x68k/conf/GENERIC
+@@ -247,6 +247,9 @@ kbd0	at mfp0				# standard keyboard
  ite0	at grf0 grfaddr 0		# internal terminal emulator
  options 	ITE_KERNEL_ATTR=4	# bold for kernel messages
  					# see /sys/arch/x68k/dev/itevar.h
-+options 	ITE_SIXEL
-+options 	ITE_16COLOR
-+options 	ITE_SYSCTL
++options		ITE_SIXEL
++options		ITE_16COLOR
++options		ITE_SYSCTL
  
  ## floppy disks
  fdc0	at intio0 addr 0xe94000 intr 96 dma 0 dmaintr 100 # floppy controller
-Index: sys/arch/x68k/conf/files.x68k
-===================================================================
-RCS file: /cvsroot/src/sys/arch/x68k/conf/files.x68k,v
-retrieving revision 1.79
-diff -u -r1.79 files.x68k
---- sys/arch/x68k/conf/files.x68k	2 Oct 2012 23:54:54 -0000	1.79
-+++ sys/arch/x68k/conf/files.x68k	17 Sep 2015 04:24:15 -0000
-@@ -66,6 +66,9 @@
+diff --git a/conf/files.x68k b/conf/files.x68k
+index 86dab41..eaeb5c2 100644
+--- sys/arch/x68k/conf/files.x68k
++++ sys/arch/x68k/conf/files.x68k
+@@ -66,6 +66,9 @@ file	arch/x68k/dev/grf_tv.c		grf | ite
  file	arch/x68k/dev/grf_gv.c		grf | ite
  
  defparam opt_ite.h	ITE_KERNEL_ATTR
@@ -66,14 +66,11 @@ diff -u -r1.79 files.x68k
  device	ite : tty
  attach	ite at grf
  file	arch/x68k/dev/ite.c		ite needs-flag
-Index: sys/arch/x68k/dev/ite.c
-===================================================================
-RCS file: /cvsroot/src/sys/arch/x68k/dev/ite.c,v
-retrieving revision 1.63
-diff -u -r1.63 ite.c
---- sys/arch/x68k/dev/ite.c	25 Jul 2014 08:10:35 -0000	1.63
-+++ sys/arch/x68k/dev/ite.c	17 Sep 2015 04:24:16 -0000
-@@ -87,6 +87,9 @@
+diff --git a/dev/ite.c b/dev/ite.c
+index 2e254c8..856c4fb 100644
+--- sys/arch/x68k/dev/ite.c
++++ sys/arch/x68k/dev/ite.c
+@@ -87,6 +87,9 @@ void opm_bell(void);
  #define SUBR_CLEAR(ip,sy,sx,h,w)	ip->isw->ite_clear(ip,sy,sx,h,w)
  #define SUBR_SCROLL(ip,sy,sx,count,dir)	\
      ip->isw->ite_scroll(ip,sy,sx,count,dir)
@@ -83,9 +80,22 @@ diff -u -r1.63 ite.c
  
  struct consdev;
  
-@@ -1193,7 +1196,11 @@
+@@ -1192,8 +1195,24 @@ iteputchar(int c, struct ite_softc *ip)
+ {
  	int n, x, y;
  	char *cp;
++#if defined(ITE_SIXEL)
++	const uint32_t table[64] = {
++		0x000000,0x000001,0x000010,0x000011,0x000100,0x000101,0x000110,0x000111,
++		0x001000,0x001001,0x001010,0x001011,0x001100,0x001101,0x001110,0x001111,
++		0x010000,0x010001,0x010010,0x010011,0x010100,0x010101,0x010110,0x010111,
++		0x011000,0x011001,0x011010,0x011011,0x011100,0x011101,0x011110,0x011111,
++		0x100000,0x100001,0x100010,0x100011,0x100100,0x100101,0x100110,0x100111,
++		0x101000,0x101001,0x101010,0x101011,0x101100,0x101101,0x101110,0x101111,
++		0x110000,0x110001,0x110010,0x110011,0x110100,0x110101,0x110110,0x110111,
++		0x111000,0x111001,0x111010,0x111011,0x111100,0x111101,0x111110,0x111111,
++	};
++#endif
  
 +#if defined(ITE_SIXEL)
 +	if ((c >= 0x20 && ip->escape) || ip->escape == DCS) {
@@ -95,7 +105,7 @@ diff -u -r1.63 ite.c
  		switch (ip->escape) {
  
  		case ESC:
-@@ -1250,6 +1257,11 @@
+@@ -1250,6 +1269,11 @@ iteputchar(int c, struct ite_softc *ip)
  				/* String Terminator */
  				c = ST;
  				ip->escape = 0;
@@ -107,7 +117,7 @@ diff -u -r1.63 ite.c
  				break;
  
  			case ']':
-@@ -1893,9 +1905,29 @@
+@@ -1893,9 +1917,29 @@ iteputchar(int c, struct ite_softc *ip)
  						break;
  
  					case '1':
@@ -137,7 +147,7 @@ diff -u -r1.63 ite.c
  
  					case '2':
  						switch (c_p[1]) {
-@@ -1964,6 +1996,22 @@
+@@ -1964,6 +2008,22 @@ iteputchar(int c, struct ite_softc *ip)
  						c_p++;
  						break;
  
@@ -160,7 +170,7 @@ diff -u -r1.63 ite.c
  					default:
  						c_p++;
  						break;
-@@ -2080,6 +2128,215 @@
+@@ -2080,6 +2140,200 @@ iteputchar(int c, struct ite_softc *ip)
  			}
  			break;
  
@@ -179,10 +189,25 @@ diff -u -r1.63 ite.c
 +
 +				case 'q':
 +					/* init sixel */
-+					/* XXX ignore aspect-ratio and background color mode */
++					/*
++					 * DSC <P1> ; <P2> ; <P3> q
++					 * P1 is aspect ratio, XXX not supported.
++					 * P2 is bgcolor mode.
++					 *  0..2: bgcolor mode, XXX not supported here.
++					 *  bit2 means 'OR'ed color mode. it's original extension.
++					 */
 +					ip->ap = ip->argbuf;
++					cp = strchr(ip->ap, ';');
++					if (cp != NULL) {
++						int mode;
++						mode = atoi(cp + 1) - '0';
++						ip->decsixel_ormode = (mode & 4);
++					} else {
++						ip->decsixel_ormode = 0;
++					}
 +					ip->dcs_cmd = DCS_SIXEL;
 +					ip->decsixel_state = DECSIXEL_INIT;
++					ip->decsixel_ph = MAX_SIXEL_WIDTH;
 +					ip->decsixel_x = 0;
 +					ip->decsixel_y = 0;
 +					ip->decsixel_repcount = 0;
@@ -227,10 +252,10 @@ diff -u -r1.63 ite.c
 +						ip->decsixel_state = c;
 +						ip->ap = ip->argbuf;
 +						return;
-+					case '$':	// LF
++					case '$':	// CR
 +						ip->decsixel_x = 0;
 +						return;
-+					case '-':	// CR
++					case '-':	// LF
 +						/* XXX FONTHEIGHT is defined in ite_tv.c, not here... */
 +						if (ip->decsixel_y + 6 > 15) {
 +							ite_lf(ip);
@@ -244,20 +269,9 @@ diff -u -r1.63 ite.c
 +					default:
 +						if ('?' <= c && c <= '~'
 +						 && ip->decsixel_x < MAX_SIXEL_WIDTH) {
-+							int sx = ip->decsixel_x;
-+							c -= '?';
-+							if ((c & 0x01) != 0)
-+								ip->decsixel_buf[0][sx] = ip->decsixel_color;
-+							if ((c & 0x02) != 0)
-+								ip->decsixel_buf[1][sx] = ip->decsixel_color;
-+							if ((c & 0x04) != 0)
-+								ip->decsixel_buf[2][sx] = ip->decsixel_color;
-+							if ((c & 0x08) != 0)
-+								ip->decsixel_buf[3][sx] = ip->decsixel_color;
-+							if ((c & 0x10) != 0)
-+								ip->decsixel_buf[4][sx] = ip->decsixel_color;
-+							if ((c & 0x20) != 0)
-+								ip->decsixel_buf[5][sx] = ip->decsixel_color;
++							uint32_t d;
++							d = table[c - '?'] * ip->decsixel_color;
++							ip->decsixel_buf[ip->decsixel_x] |= d;
 +							ip->decsixel_x++;
 +						} else {
 +							/* ignore */
@@ -272,30 +286,11 @@ diff -u -r1.63 ite.c
 +					} else {
 +						int cnt = min(ip->decsixel_repcount,
 +							MAX_SIXEL_WIDTH - ip->decsixel_x);
-+						c -= '?';
-+						if ((c & 0x01) != 0) {
-+							memset(&ip->decsixel_buf[0][ip->decsixel_x],
-+								ip->decsixel_color, cnt);
-+						}
-+						if ((c & 0x02) != 0) {
-+							memset(&ip->decsixel_buf[1][ip->decsixel_x],
-+								ip->decsixel_color, cnt);
-+						}
-+						if ((c & 0x04) != 0) {
-+							memset(&ip->decsixel_buf[2][ip->decsixel_x],
-+								ip->decsixel_color, cnt);
-+						}
-+						if ((c & 0x08) != 0) {
-+							memset(&ip->decsixel_buf[3][ip->decsixel_x],
-+								ip->decsixel_color, cnt);
-+						}
-+						if ((c & 0x10) != 0) {
-+							memset(&ip->decsixel_buf[4][ip->decsixel_x],
-+								ip->decsixel_color, cnt);
-+						}
-+						if ((c & 0x20) != 0) {
-+							memset(&ip->decsixel_buf[5][ip->decsixel_x],
-+								ip->decsixel_color, cnt);
++						uint32_t d;
++						int i;
++						d = table[c - '?'] * ip->decsixel_color;
++						for (i = 0; i < cnt; i++) {
++							ip->decsixel_buf[ip->decsixel_x + i] |= d;
 +						}
 +						ip->decsixel_x += ip->decsixel_repcount;
 +						ip->decsixel_repcount = 0;
@@ -331,7 +326,7 @@ diff -u -r1.63 ite.c
 +							ip->decsixel_state = DECSIXEL_RASTER_PV;
 +							return;
 +						case DECSIXEL_RASTER_PV:
-+							ip->decsixel_pv = ite_zargnum(ip);
++							/* ignore PV */
 +							ip->decsixel_state = DECSIXEL_INIT;
 +							/* c is a next sequence char */
 +							goto sixel_loop;
@@ -376,7 +371,7 @@ diff -u -r1.63 ite.c
  
  		default:
  			ip->escape = 0;
-@@ -2207,6 +2464,9 @@
+@@ -2207,6 +2461,9 @@ iteputchar(int c, struct ite_softc *ip)
  		
  	case DCS:	/* device control string introducer */
  		ip->escape = DCS;
@@ -386,13 +381,10 @@ diff -u -r1.63 ite.c
  		ip->ap = ip->argbuf;
  		break;
  		
-Index: sys/arch/x68k/dev/ite_tv.c
-===================================================================
-RCS file: /cvsroot/src/sys/arch/x68k/dev/ite_tv.c,v
-retrieving revision 1.16
-diff -u -r1.16 ite_tv.c
---- sys/arch/x68k/dev/ite_tv.c	28 Apr 2013 14:44:46 -0000	1.16
-+++ sys/arch/x68k/dev/ite_tv.c	17 Sep 2015 04:24:16 -0000
+diff --git a/dev/ite_tv.c b/dev/ite_tv.c
+index aae754a..2cfe9be 100644
+--- sys/arch/x68k/dev/ite_tv.c
++++ sys/arch/x68k/dev/ite_tv.c
 @@ -33,10 +33,15 @@
  #include <sys/cdefs.h>
  __KERNEL_RCSID(0, "$NetBSD: ite_tv.c,v 1.16 2013/04/28 14:44:46 isaki Exp $");
@@ -409,7 +401,7 @@ diff -u -r1.16 ite_tv.c
  
  #include <machine/bus.h>
  #include <machine/grfioctl.h>
-@@ -71,6 +76,9 @@
+@@ -71,6 +76,9 @@ __KERNEL_RCSID(0, "$NetBSD: ite_tv.c,v 1.16 2013/04/28 14:44:46 isaki Exp $");
  
  u_int  tv_top;
  u_char *tv_row[PLANELINES];
@@ -419,7 +411,7 @@ diff -u -r1.16 ite_tv.c
  char   *tv_font[256];
  volatile char *tv_kfont[0x7f];
  
-@@ -90,6 +98,9 @@
+@@ -90,6 +98,9 @@ void tv_putc(struct ite_softc *, int, int, int, int);
  void tv_cursor(struct ite_softc *, int);
  void tv_clear(struct ite_softc *, int, int, int, int);
  void tv_scroll(struct ite_softc *, int, int, int, int);
@@ -429,7 +421,7 @@ diff -u -r1.16 ite_tv.c
  
  inline static int expbits(int);
  inline static void txrascpy(u_char, u_char, short, signed short);
-@@ -166,6 +177,9 @@
+@@ -166,6 +177,9 @@ tv_init(struct ite_softc *ip)
  	tv_top = 0;
  	for (i = 0; i < PLANELINES; i++)
  		tv_row[i] = (void *)__UNVOLATILE(&IODEVbase->tvram[ROWOFFSET(i)]);
@@ -439,7 +431,7 @@ diff -u -r1.16 ite_tv.c
  	/* shadow ANK font */
  	memcpy(kern_font, (void *)&IODEVbase->cgrom0_8x16, 256 * FONTHEIGHT);
  	ite_set_glyph();
-@@ -189,6 +203,9 @@
+@@ -189,6 +203,9 @@ tv_init(struct ite_softc *ip)
  	ip->isw->ite_cursor = tv_cursor;
  	ip->isw->ite_clear  = tv_clear;
  	ip->isw->ite_scroll = tv_scroll;
@@ -449,7 +441,7 @@ diff -u -r1.16 ite_tv.c
  
  	/*
  	 * Intialize colormap
-@@ -204,6 +221,20 @@
+@@ -204,6 +221,20 @@ tv_init(struct ite_softc *ip)
  	IODEVbase->tpalet[5] = 1 | BLUE | RED;		/* magenta */
  	IODEVbase->tpalet[6] = 1 | BLUE | GREEN;	/* cyan */
  	IODEVbase->tpalet[7] = 1 | BLUE | RED | GREEN;	/* white */
@@ -470,7 +462,7 @@ diff -u -r1.16 ite_tv.c
  }
  
  /*
-@@ -726,3 +757,122 @@
+@@ -726,3 +757,169 @@ tv_scroll(struct ite_softc *ip, int srcy, int srcx, int count, int dir)
  		break;
  	}
  }
@@ -514,7 +506,7 @@ diff -u -r1.16 ite_tv.c
 +			data[3] = 0;
 +#endif
 +			for (px = 0; px < 16; px++) {
-+				color = ip->decsixel_buf[y][cx * 16 + px];
++				color = ip->decsixel_buf[cx * 16 + px] >> (y * 4);
 +				/* x68k console is 8 colors */
 +				data[0] = (data[0] << 1) | ((color >> 0) & 1);
 +				data[1] = (data[1] << 1) | ((color >> 1) & 1);
@@ -593,14 +585,58 @@ diff -u -r1.16 ite_tv.c
 +	}
 +}
 +#endif /* ITE_SYSCTL */
-Index: sys/arch/x68k/dev/itevar.h
-===================================================================
-RCS file: /cvsroot/src/sys/arch/x68k/dev/itevar.h,v
-retrieving revision 1.15
-diff -u -r1.15 itevar.h
---- sys/arch/x68k/dev/itevar.h	10 Oct 2012 17:49:50 -0000	1.15
-+++ sys/arch/x68k/dev/itevar.h	17 Sep 2015 04:24:16 -0000
-@@ -50,6 +50,7 @@
++
++#if defined(ITE_SYSCTL)
++static int sysctl_hw_sysport_contrast(SYSCTLFN_PROTO);
++static int
++sysctl_hw_sysport_contrast(SYSCTLFN_ARGS)
++{
++	struct sysctlnode node;
++	int error;
++	int t;
++
++	node = *rnode;
++	t = (int)(IODEVbase->io_sysport.contrast);
++
++	node.sysctl_data = &t;
++
++	error = sysctl_lookup(SYSCTLFN_CALL(&node));
++	if (error || newp == NULL)
++		return error;
++
++	if (t < 0 || t > 15)
++		return EINVAL;
++
++	IODEVbase->io_sysport.contrast = t;
++
++	return 0;
++}
++
++SYSCTL_SETUP(sysctl_sysport, "sysctl sysport.contrast")
++{
++	const struct sysctlnode *node;
++
++	sysctl_createv(NULL, 0, NULL, &node,
++		CTLFLAG_PERMANENT, CTLTYPE_NODE,
++		"sysport", SYSCTL_DESCR("sysport"),
++		NULL, 0, NULL, 0,
++		CTL_HW, CTL_CREATE, CTL_EOL);
++	if (node == NULL)
++		return;
++
++	sysctl_createv(NULL, 0, NULL, NULL,
++		CTLFLAG_PERMANENT | CTLFLAG_READWRITE,
++		CTLTYPE_INT,
++		"contrast", SYSCTL_DESCR("contrast"),
++		sysctl_hw_sysport_contrast, 0, NULL, 0,
++		CTL_HW, node->sysctl_num, CTL_CREATE, CTL_EOL);
++}
++#endif
+diff --git a/dev/itevar.h b/dev/itevar.h
+index b8dbf31..3bf9fbd 100644
+--- sys/arch/x68k/dev/itevar.h
++++ sys/arch/x68k/dev/itevar.h
+@@ -50,6 +50,7 @@ struct itesw {
  	void	(*ite_putc)(struct ite_softc *, int, int, int, int);
  	void	(*ite_cursor)(struct ite_softc *, int);
  	void	(*ite_scroll)(struct ite_softc *, int, int, int, int);
@@ -608,13 +644,13 @@ diff -u -r1.15 itevar.h
  };
  
  enum ite_arraymaxs {
-@@ -94,6 +95,27 @@
+@@ -94,6 +95,27 @@ struct ite_softc {
  	short	save_curx, save_cury, save_attribute, save_char;
  	char	sc_G0, sc_G1, sc_G2, sc_G3;
  	char	*sc_GL, *sc_GR;
 +	enum {
 +		DCS_START = 0,
-+		DCS_SIXEL = 'q',	// DECRQSS also use 'q'... 
++		DCS_SIXEL = 'q',	// DECRQSS also use 'q'...
 +	} dcs_cmd;
 +	enum {
 +		DECSIXEL_INIT = 0,
@@ -626,13 +662,13 @@ diff -u -r1.15 itevar.h
 +		DECSIXEL_COLOR = '#',
 +	} decsixel_state;
 +	int     decsixel_ph;
-+	int     decsixel_pv;
 +	int     decsixel_x;
 +	int     decsixel_y;
 +	int		decsixel_repcount;
 +	int     decsixel_color;
++	int     decsixel_ormode;
 +#define MAX_SIXEL_WIDTH (768)
-+	u_char  decsixel_buf[6][MAX_SIXEL_WIDTH];
++	uint32_t decsixel_buf[MAX_SIXEL_WIDTH];
  };
  
  enum emul_level {
